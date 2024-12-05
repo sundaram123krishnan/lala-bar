@@ -38,8 +38,6 @@ pub struct LalaMusicBar {
     balance_text: String,
     bar_index: SliderIndex,
     launcher: Option<launcher::Launcher>,
-    launcherid: Option<iced::window::Id>,
-    hiddenid: Option<iced::window::Id>,
     hiddenid_lock: bool,
     right_panel: Option<iced::window::Id>,
     notifications: HashMap<u32, NotifyUnitWidgetInfo>,
@@ -50,13 +48,12 @@ pub struct LalaMusicBar {
     sender: Option<Sender<NotifyCommand>>,
     quite_mode: bool,
     datetime: DateTime<Local>,
-    calendar_id: Option<iced::window::Id>,
     show_picker: bool,
     date: Date,
     is_calendar_open: bool,
     time: Time,
     is_time_picker_open: bool,
-    time_picker_id: Option<iced::window::Id>,
+    ids: HashMap<String, Option<iced::window::Id>>,
 }
 
 impl LalaMusicBar {
@@ -200,9 +197,9 @@ impl LalaMusicBar {
 
         // NOTE: we should delete to be deleted notification
         if notifications_count <= MAX_SHOWN_NOTIFICATIONS_COUNT {
-            if let Some(id) = self.hiddenid {
+            if let Some(id) = self.ids.get("hidden") {
                 commands.push(iced_runtime::task::effect(Action::Window(
-                    WindowAction::Close(id),
+                    WindowAction::Close(self.ids.get("hidden").unwrap().unwrap()),
                 )));
             }
         }
@@ -503,9 +500,7 @@ impl MultiApplication for LalaMusicBar {
                 balance_text: "".to_string(),
                 bar_index: SliderIndex::Balance,
                 launcher: None,
-                launcherid: None,
                 right_panel: None,
-                hiddenid: None,
                 hiddenid_lock: false,
                 notifications: HashMap::new(),
                 notifications_markdown: HashMap::new(),
@@ -515,13 +510,12 @@ impl MultiApplication for LalaMusicBar {
                 sender: None,
                 quite_mode: false,
                 datetime: Local::now(),
-                calendar_id: None,
                 show_picker: false,
                 date: Date::today(),
                 is_calendar_open: false,
                 is_time_picker_open: false,
                 time: Time::now_hm(true),
-                time_picker_id: None,
+                ids: HashMap::new(),
             },
             Command::batch(vec![
                 Command::done(Message::UpdateBalance),
@@ -535,20 +529,19 @@ impl MultiApplication for LalaMusicBar {
     }
 
     fn id_info(&self, id: iced::window::Id) -> Option<Self::WindowInfo> {
-        if self.launcherid.is_some_and(|tid| tid == id) {
+        if self.ids.get("launcher").and_then(|v| v.as_ref()).is_some_and(|tid| tid == &id) {
             Some(LaLaInfo::Launcher)
-        } else if self.hiddenid.is_some_and(|tid| tid == id) {
+        } else if self.ids.get("hidden").and_then(|v| v.as_ref()).is_some_and(|tid| tid == &id) {
             Some(LaLaInfo::HiddenInfo)
-        } else if self.time_picker_id.is_some_and(|tid| tid == id) {
+        } else if self.ids.get("time_picker").and_then(|v| v.as_ref()).is_some_and(|tid| tid == &id) {
             Some(LaLaInfo::TimePicker)
-        } else if self.right_panel.is_some_and(|tid| tid == id) {
+        } else if self.ids.get("right_panel").and_then(|v| v.as_ref()).is_some_and(|tid| tid == &id) {
             Some(LaLaInfo::RightPanel)
-        } else if self.calendar_id.is_some_and(|tid| tid == id) {
+        } else if self.ids.get("calendar").and_then(|v| v.as_ref()).is_some_and(|tid| tid == &id) {
             Some(LaLaInfo::Calendar)
+        } else if let Some(info) = self.cached_notifications.get(&id) {
+            Some(LaLaInfo::Notify(Box::new(info.clone())))
         } else {
-            if let Some(info) = self.cached_notifications.get(&id) {
-                return Some(LaLaInfo::Notify(Box::new(info.clone())));
-            }
             let notify_id = self.showned_notifications.get(&id)?;
             Some(
                 self.notifications
@@ -560,52 +553,63 @@ impl MultiApplication for LalaMusicBar {
         }
     }
 
+
     fn set_id_info(&mut self, id: iced::window::Id, info: Self::WindowInfo) {
         match info {
             LaLaInfo::Launcher => {
-                self.launcherid = Some(id);
+                self.ids.insert("launcher".to_string(), Some(id));
             }
             LaLaInfo::Notify(notify) => {
                 self.showned_notifications.insert(id, notify.unit.id);
             }
             LaLaInfo::HiddenInfo => {
                 self.hiddenid_lock = false;
-                self.hiddenid = Some(id);
+                self.ids.insert("hidden".to_string(), Some(id));
             }
-            LaLaInfo::RightPanel => self.right_panel = Some(id),
-            LaLaInfo::Calendar => self.calendar_id = Some(id),
-            LaLaInfo::TimePicker => self.time_picker_id = Some(id),
+            LaLaInfo::RightPanel => {
+                self.right_panel = Some(id);
+                self.ids.insert("right_panel".to_string(), Some(id));
+            },
+            LaLaInfo::Calendar => {
+                self.ids.insert("calendar".to_string(), Some(id));
+            },
+            LaLaInfo::TimePicker => {
+                self.ids.insert("time_picker".to_string(), Some(id));
+            },
             _ => unreachable!(),
         }
     }
 
     fn remove_id(&mut self, id: iced::window::Id) {
-        if self.launcherid.is_some_and(|lid| lid == id) {
-            self.launcherid.take();
+        if self.ids.get("launcher").and_then(|v| v.as_ref()).is_some_and(|lid| lid == &id) {
+            self.ids.insert("launcher".to_string(), None);
             self.launcher.take();
         }
-        if self.right_panel.is_some_and(|lid| lid == id) {
+        if self.ids.get("right_panel").and_then(|v| v.as_ref()).is_some_and(|lid| lid == &id) {
             self.right_panel.take();
+            self.ids.insert("right_panel".to_string(), None);
         }
-        if self.hiddenid.is_some_and(|lid| lid == id) {
-            self.hiddenid.take();
+        if self.ids.get("hidden").and_then(|v| v.as_ref()).is_some_and(|lid| lid == &id) {
+            self.ids.insert("hidden".to_string(), None);
         }
+
         'clear_nid: {
             if let Some(nid) = self.showned_notifications.remove(&id) {
                 if let Some(NotifyUnitWidgetInfo {
-                    to_delete: false, ..
-                }) = self.notifications.get(&nid)
+                                to_delete: false, ..
+                            }) = self.notifications.get(&nid)
                 {
                     break 'clear_nid;
                 }
-                // If the widget is marked to removed
-                // Then delete it
+                // If the widget is marked to be removed, delete it
                 self.notifications.remove(&nid);
                 self.notifications_markdown.remove(&nid);
             }
         }
+
         self.cached_notifications.remove(&id);
     }
+
 
     fn update(&mut self, message: Message) -> Command<Message> {
         match message {
@@ -614,33 +618,33 @@ impl MultiApplication for LalaMusicBar {
                 return Command::perform(get_metadata(), Message::DBusInfoUpdate)
             }
             Message::ToggleCalendar => {
-                if self.is_calendar_open && self.calendar_id.is_some() {
+                if self.is_calendar_open && self.ids.get("calendar").is_some() {
                     self.is_calendar_open = false;
                     return iced_runtime::task::Task::batch([iced_runtime::task::effect(
-                        Action::Window(WindowAction::Close(self.calendar_id.unwrap())),
+                        Action::Window(WindowAction::Close(self.ids.get("calendar").unwrap().unwrap())),
                     )]);
                 } else if self.is_calendar_open
                     && self.is_time_picker_open
-                    && self.calendar_id.is_some()
-                    && self.time_picker_id.is_some()
+                    && self.ids.get("launcher").is_some()
+                    && self.ids.get("time_picker").is_some()
                 {
                     self.is_time_picker_open = false;
                     self.is_calendar_open = false;
                     return iced_runtime::task::Task::batch([
                         iced_runtime::task::effect(Action::Window(WindowAction::Close(
-                            self.calendar_id.unwrap(),
+                            self.ids.get("calendar").unwrap().unwrap(),
                         ))),
                         iced_runtime::task::effect(Action::Window(WindowAction::Close(
-                            self.time_picker_id.unwrap(),
+                            self.ids.get("time_picker").unwrap().unwrap(),
                         ))),
                     ]);
                 } else {
-                    if self.is_time_picker_open && self.time_picker_id.is_some() {
+                    if self.is_time_picker_open && self.ids.get("time_picker").is_some() {
                         self.is_time_picker_open = false;
                         self.is_calendar_open = true;
                         return iced_runtime::task::Task::batch([
                             iced_runtime::task::effect(Action::Window(WindowAction::Close(
-                                self.time_picker_id.unwrap(),
+                                self.ids.get("time_picker").unwrap().unwrap(),
                             ))),
                             Command::done(Message::NewLayerShell {
                                 settings: NewLayerShellSettings {
@@ -675,33 +679,33 @@ impl MultiApplication for LalaMusicBar {
             }
 
             Message::ToggleTime => {
-                if self.is_time_picker_open && self.time_picker_id.is_some() {
+                if self.is_time_picker_open && self.ids.get("time_picker").is_some() {
                     self.is_time_picker_open = false;
                     return iced_runtime::task::Task::batch([iced_runtime::task::effect(
-                        Action::Window(WindowAction::Close(self.time_picker_id.unwrap())),
+                        Action::Window(WindowAction::Close(self.ids.get("time_picker").unwrap().unwrap())),
                     )]);
                 } else if self.is_calendar_open
                     && self.is_time_picker_open
-                    && self.calendar_id.is_some()
-                    && self.time_picker_id.is_some()
+                    && self.ids.get("calendar").is_some()
+                    && self.ids.get("time_picker").is_some()
                 {
                     self.is_time_picker_open = false;
                     self.is_calendar_open = false;
                     return iced_runtime::task::Task::batch([
                         iced_runtime::task::effect(Action::Window(WindowAction::Close(
-                            self.calendar_id.unwrap(),
+                            self.ids.get("calendar").unwrap().unwrap(),
                         ))),
                         iced_runtime::task::effect(Action::Window(WindowAction::Close(
-                            self.time_picker_id.unwrap(),
+                            self.ids.get("time_picker").unwrap().unwrap(),
                         ))),
                     ]);
                 } else {
-                    if self.is_calendar_open && self.calendar_id.is_some() {
+                    if self.is_calendar_open && self.ids.get("calendar").is_some() {
                         self.is_calendar_open = false;
                         self.is_time_picker_open = true;
                         return iced_runtime::task::Task::batch([
                             iced_runtime::task::effect(Action::Window(WindowAction::Close(
-                                self.calendar_id.unwrap(),
+                                self.ids.get("calendar").unwrap().unwrap(),
                             ))),
                             Command::done(Message::NewLayerShell {
                                 settings: NewLayerShellSettings {
@@ -824,8 +828,8 @@ impl MultiApplication for LalaMusicBar {
             Message::SliderIndexPre => self.bar_index = self.bar_index.pre(),
             Message::ToggleLauncher => {
                 if self.launcher.is_some() {
-                    if let Some(id) = self.launcherid {
-                        return iced_runtime::task::effect(Action::Window(WindowAction::Close(id)));
+                    if let Some(id) = self.ids.get("launcher").unwrap() {
+                        return iced_runtime::task::effect(Action::Window(WindowAction::Close(self.ids.get("launcher").unwrap().unwrap())));
                     }
                     return Command::none();
                 }
@@ -849,8 +853,8 @@ impl MultiApplication for LalaMusicBar {
             }
             Message::ToggleLauncherDBus => {
                 if self.launcher.is_some() {
-                    if let Some(id) = self.launcherid {
-                        return iced_runtime::task::effect(Action::Window(WindowAction::Close(id)));
+                    if let Some(id) = self.ids.get("launcher").unwrap() {
+                        return iced_runtime::task::effect(Action::Window(WindowAction::Close(self.ids.get("launcher").unwrap().unwrap())));
                     }
                     return Command::none();
                 }
@@ -876,7 +880,7 @@ impl MultiApplication for LalaMusicBar {
             Message::ToggleRightPanel => {
                 if self.right_panel.is_some() {
                     if let Some(id) = self.right_panel {
-                        return iced_runtime::task::effect(Action::Window(WindowAction::Close(id)));
+                        return iced_runtime::task::effect(Action::Window(WindowAction::Close(self.ids.get("right_panel").unwrap().unwrap())));
                     }
                     return Command::none();
                 }
@@ -992,7 +996,7 @@ impl MultiApplication for LalaMusicBar {
 
                 if !self.hidden_notification().is_empty()
                     && !self.quite_mode
-                    && self.hiddenid.is_none()
+                    && self.ids.get("hidden").is_none()
                     && !self.hiddenid_lock
                 {
                     self.hiddenid_lock = true;
@@ -1023,9 +1027,9 @@ impl MultiApplication for LalaMusicBar {
                             WindowAction::Close(*id),
                         )));
                     }
-                    if let Some(extra_id) = self.hiddenid {
+                    if let Some(Some(extra_id)) = self.ids.get("hidden").map(|v| v.as_ref()) {
                         commands.push(iced_runtime::task::effect(Action::Window(
-                            WindowAction::Close(extra_id),
+                            WindowAction::Close(*extra_id),
                         )));
                     }
                 } else {
@@ -1049,7 +1053,7 @@ impl MultiApplication for LalaMusicBar {
                         }));
                     }
                     if self.notifications.len() > MAX_SHOWN_NOTIFICATIONS_COUNT
-                        && self.hiddenid.is_none()
+                        && self.ids.get("hidden").is_none()
                     {
                         commands.push(Command::done(Message::NewLayerShell {
                             settings: NewLayerShellSettings {
@@ -1082,8 +1086,8 @@ impl MultiApplication for LalaMusicBar {
             }
             Message::LauncherInfo(message) => {
                 if let Some(launcher) = self.launcher.as_mut() {
-                    if let Some(id) = self.launcherid {
-                        return launcher.update(message, id);
+                    if let Some(Some(id)) = self.ids.get("launcher").map(|v| v.as_ref()) {
+                        return launcher.update(message, *id);
                     }
                 }
             }
@@ -1123,9 +1127,9 @@ impl MultiApplication for LalaMusicBar {
                     .map(|id| iced_runtime::task::effect(Action::Window(WindowAction::Close(*id))))
                     .collect::<Vec<_>>();
 
-                if let Some(id) = self.hiddenid {
+                if let Some(Some(id)) = self.ids.get("hidden").map(|v| v.as_ref()) {
                     commands.push(iced_runtime::task::effect(Action::Window(
-                        WindowAction::Close(id),
+                        WindowAction::Close(*id),
                     )));
                 }
 
